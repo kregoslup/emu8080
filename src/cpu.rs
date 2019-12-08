@@ -35,7 +35,9 @@ impl Cpu {
     fn execute(&mut self, op_code: &OpCode) {
         match op_code.value {
             0x00 => println!("NOP code"),
+            0x37 => self.flags.carry = true,
             0x76 => self.halt(),
+            0x3f => self.flags.carry = !self.flags.carry,
             0x40..=0x7f => self.transfer(op_code),
             0x80..=0xbf => self.arithmetic_operation(op_code),
             _ => panic!("Unknown op code")
