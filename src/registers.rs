@@ -18,6 +18,7 @@ pub struct Flags {
     pub sign: bool,
     pub parity: bool,
     pub carry: bool,
+    pub aux_carry: bool,
 }
 
 impl Registers {
@@ -36,8 +37,17 @@ impl Registers {
     pub fn get_hl(&self) -> u16 {
         (((self.h as u16) << 8) | (self.l as u16))
     }
+
+    pub fn get_de(&self) -> u16 {
+        (((self.d as u16) << 8) | (self.e as u16))
+    }
+
+    pub fn get_bc(&self) -> u16 {
+        (((self.b as u16) << 8) | (self.c as u16))
+    }
 }
 
+// TODO: AUX CARRY
 impl Flags {
     pub fn new() -> Flags {
         Flags {
@@ -45,14 +55,37 @@ impl Flags {
             sign: false,
             parity: false,
             carry: false,
+            aux_carry: false
         }
     }
 
-    pub fn set_all(&mut self, value: u16) {
+    pub fn set_zero(&mut self, value: u16) {
         self.zero = value.count_ones() == 0;
+    }
+
+    pub fn set_parity(&mut self, value: u16) {
+        self.parity = value.count_ones() % 2 == 0;
+    }
+
+    pub fn set_sign(&mut self, value: u16) {
         self.sign = (value & 0x80) != 0;
-        self.parity = value.count_ones() % 2 == 0; // or 0
+    }
+
+    pub fn set_carry(&mut self, value: u16) {
         self.carry = value > 0xFF;
+    }
+
+    pub fn set_all(&mut self, value: u16) {
+        self.set_zero(value);
+        self.set_sign(value);
+        self.set_parity(value);
+        self.set_carry(value);
+    }
+
+    pub fn set_single_registry_operation_flags(&mut self, value: u16) {
+        self.set_zero(value);
+        self.set_sign(value);
+        self.set_parity(value);
     }
 }
 
@@ -62,11 +95,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_hl() {
+    fn test_get_registry_pair() {
         let mut registers = Registers::new();
-        registers.h = 0b10101010;
-        registers.l = 0b01010101;
-        assert_eq!(registers.get_hl(), 0b1010101001010101)
+        let left = 0b10101010;
+        let right = 0b01010101;
+        let result = 0b1010101001010101;
+        registers.h = left;
+        registers.l = right;
+        assert_eq!(registers.get_hl(), result);
+
+        registers.d = left;
+        registers.e = right;
+        assert_eq!(registers.get_de(), result);
+
+        registers.b = left;
+        registers.c = right;
+        assert_eq!(registers.get_bc(), result)
     }
 
     #[test]

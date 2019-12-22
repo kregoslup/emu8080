@@ -6,6 +6,16 @@ pub struct OpCode {
 }
 
 impl OpCode {
+    pub fn extract_registry_pair_description(&self) -> u8 {
+        println!("Extracting single registry operation from {:#b}", self.value);
+        (self.value.bitand(0b00010000)) >> 4
+    }
+
+    pub fn extract_single_registry_operation(&self) -> u8 {
+        println!("Extracting single registry operation from {:#b}", self.value);
+        (self.value.bitand(0b11000000)) >> 6
+    }
+
     pub fn extract_first_operand(&self) -> u8 {
         println!("Extracting first operand from {:#b}", self.value);
         (self.value.bitand(0b00111000)) >> 3
