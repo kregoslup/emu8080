@@ -36,16 +36,37 @@ impl Cpu {
 
     fn execute(&mut self, op_code: &OpCode) {
         match op_code.value {
-            0x00 => println!("NOP code"),
-            0x37 => self.flags.carry = true,
-            0x3f => self.flags.carry = !self.flags.carry,
+            0x00 => {
+                println!("NOP code");
+                self.program_counter += 1;
+            },
+            0x37 => {
+                self.flags.carry = true;
+                self.program_counter += 1;
+            },
+            0x3f => {
+                self.flags.carry = !self.flags.carry;
+                self.program_counter += 1;
+            },
             0x76 => self.halt(),
             0x0a | 0x1a => self.load_accumulator(op_code),
             0x01..=0x3e => self.single_operand_operation(op_code),
             0x40..=0x7f => self.transfer(op_code),
             0x80..=0xbf => self.arithmetic_operation(op_code),
+            0xc5 | 0xd5 | 0xe5 | 0xf5 | 0xc6 | 0xe6 | 0xfe => self.single_operand_operation(op_code),
+            0xeb => self.exchange_registers(op_code),
             _ => panic!("Unknown op code")
         }
+    }
+
+    fn exchange_registers(&mut self, op_code: &OpCode) {
+        let mut tmp = self.registers.h;
+        self.registers.h = self.registers.d;
+        self.registers.d = tmp;
+        tmp = self.registers.l;
+        self.registers.l = self.registers.e;
+        self.registers.e = tmp;
+        self.program_counter += 1;
     }
 
     fn load_accumulator(&mut self, op_code: &OpCode) {
@@ -63,29 +84,122 @@ impl Cpu {
     fn single_operand_operation(&mut self, op_code: &OpCode) {
         let operation = (op_code.extract_single_registry_operation(), op_code.extract_second_operand());
         let encoded_address = op_code.extract_first_operand();
-        let mut value = Wrapping(self.extract_memory_or_register(encoded_address));
         match operation {
             // INR
-            (0b00, 0b100) => {
+            (0b0, 0b100) => {
+                let mut value = Wrapping(self.extract_memory_or_register(encoded_address));
                 value += Wrapping(1);
                 self.change_single_registry_value(encoded_address, value.0);
             },
             // DCR
-            (0b00, 0b101) => {
+            (0b0, 0b101) => {
+                let mut value = Wrapping(self.extract_memory_or_register(encoded_address));
                 value -= Wrapping(1);
                 self.change_single_registry_value(encoded_address, value.0);
             },
+            // ROTATE
             (0b0, 0b111) => {
                 self.rotate_acc(encoded_address);
             },
-            // STACK
+            //DAD
+            (0b0, 0b001) => {
+                self.double_add(encoded_address);
+            },
+            // INX
+            (0b0, 0b011) => {
+                self.increment_double(encoded_address);
+            },
+            // PUSH
             (0b11, 0b101) => {
                 self.push_on_stack(encoded_address);
-            }
+            },
+            // POP
+            (0b11, 0b1) => {
+                self.pop_off_stack(encoded_address);
+            },
+            // MVI
+            (0b0, 0b110) => {
+                self.move_immediate(encoded_address);
+            },
+            // ADI
+            (0b11, 0b110) => {
+                self.immediate_arithmetic(encoded_address);
+            },
             _ => panic!("Unknown single registry operation")
         }
 
         self.program_counter += 1;
+    }
+
+    fn immediate_arithmetic(&mut self, operation: u8) {
+        self.program_counter += 1;
+        let data = self.memory.fetch_byte_at_offset(self.program_counter);
+        match operation {
+            0b0 => self.add(data, false),
+            0b100 => self.and(data),
+            0b111 => self.comparison(data),
+            // TODO: Needs test
+            0b001 => self.add(data, true),
+            0b010 => self.subtract(data, false),
+            0b011 => self.subtract(data, true),
+            0b101 => self.xor(data),
+            0b110 => self.or(data),
+            _ => panic!("Unknown immediate operation")
+        }
+    }
+
+    fn move_immediate(&mut self, address: u8) {
+        self.program_counter += 1;
+        let data = self.memory.fetch_byte_at_offset(self.program_counter);
+        self.set_memory_or_register(address, data);
+    }
+
+    fn increment_double(&mut self, address: u8) {
+        match address {
+            0b0 => {
+                let mut value = Wrapping(self.registers.get_bc());
+                value += Wrapping(1);
+                self.registers.set_bc(value.0);
+            },
+            0b010 => {
+                let mut value = Wrapping(self.registers.get_de());
+                value += Wrapping(1);
+                self.registers.set_de(value.0);
+            },
+            0b100 => {
+                let mut value = Wrapping(self.registers.get_hl());
+                value += Wrapping(1);
+                self.registers.set_hl(value.0);
+            },
+            0b110 => {
+                let mut value = Wrapping(self.stack_pointer);
+                value += Wrapping(1);
+                self.stack_pointer = value.0;
+            },
+            _ => panic!("Unknown register pair")
+        }
+    }
+
+    fn double_add(&mut self, address: u8) {
+        let value;
+        match address {
+            0b001 => {
+                value = self.registers.get_bc();
+            },
+            0b011 => {
+                value = self.registers.get_de();
+            },
+            0b101 => {
+                value = self.registers.get_hl();
+            },
+            0b111 => {
+                value = self.stack_pointer;
+            },
+            _ => panic!("Unknown register pair")
+        }
+        let result: u32 = self.registers.get_hl() as u32 + value as u32;
+        self.flags.set_carry_on_double(result);
+        self.registers.set_hl(result as u16);
     }
 
     fn push_on_stack(&mut self, address: u8) {
@@ -106,10 +220,10 @@ impl Cpu {
             },
             0b110 => {
                 upper = self.registers.acc;
-                lower = ((self.flags.sign as u8) << 8) |
-                         ((self.flags.zero as u8) << 7) |
-                         ((self.flags.aux_carry as u8) << 5) |
-                         ((self.flags.parity as u8) << 3) |
+                lower = ((self.flags.sign as u8) << 7) |
+                         ((self.flags.zero as u8) << 6) |
+                         ((self.flags.aux_carry as u8) << 4) |
+                         ((self.flags.parity as u8) << 2) |
                          (0b00000010) |
                         (self.flags.carry as u8)
             },
@@ -118,6 +232,35 @@ impl Cpu {
         self.memory.set_byte_at_offset(self.stack_pointer - 1, upper);
         self.memory.set_byte_at_offset(self.stack_pointer - 2, lower);
         self.stack_pointer -= 2;
+    }
+
+    fn pop_off_stack(&mut self, destination: u8) {
+        let upper = self.memory.fetch_byte_at_offset(self.stack_pointer);
+        let lower = self.memory.fetch_byte_at_offset(self.stack_pointer + 1);
+        match destination {
+            0b0 => {
+                self.registers.b = lower;
+                self.registers.c = upper;
+            },
+            0b010 => {
+                self.registers.d = lower;
+                self.registers.e = upper;
+            },
+            0b100 => {
+                self.registers.h = lower;
+                self.registers.l = upper;
+            },
+            0b110 => {
+                self.registers.acc = lower;
+                self.flags.sign = upper << 7 != 0;
+                self.flags.zero = upper << 6 != 0;
+                self.flags.aux_carry = upper << 4 != 0;
+                self.flags.parity = upper << 2 != 0;
+                self.flags.carry = upper != 0;
+            },
+            _ => panic!("Unknown register pair")
+        }
+        self.stack_pointer += 2;
     }
 
     fn rotate_acc(&mut self, direction: u8) {
@@ -184,7 +327,7 @@ impl Cpu {
     }
 
     fn halt(&self) {
-        exit(0);
+        unimplemented!();
     }
 
     fn arithmetic_operation(&mut self, op_code: &OpCode) {
@@ -281,9 +424,7 @@ mod tests {
         let mut cpu = create_test_cpu(vec![0x66, result]);
         cpu.registers.h = 0;
         cpu.registers.b = 2;
-//        panic::catch_unwind(|| {
         cpu.emulate();
-//        });
         assert_eq!(cpu.registers.h, result)
     }
 
@@ -438,5 +579,114 @@ mod tests {
         cpu.emulate();
         assert_eq!(cpu.registers.acc, 0b01111001);
         assert_eq!(cpu.flags.carry, false);
+    }
+
+    #[test]
+    fn test_push_on_stack() {
+        let mut cpu = create_test_cpu(vec![0x00, 0xc5]);
+        cpu.stack_pointer = 2;
+        cpu.registers.b = 12;
+        cpu.registers.c = 18;
+        cpu.emulate();
+        assert_eq!(cpu.memory.fetch_byte_at_offset(1), 12);
+        assert_eq!(cpu.memory.fetch_byte_at_offset(0), 18);
+        assert_eq!(cpu.stack_pointer, 0);
+    }
+
+    #[test]
+    fn test_push_flags_on_stack() {
+        let mut cpu = create_test_cpu(vec![0x00, 0xf5]);
+        cpu.stack_pointer = 2;
+        cpu.registers.acc = 12;
+        cpu.flags.sign = true;
+        cpu.flags.carry = true;
+        cpu.flags.zero = false;
+        cpu.flags.parity = true;
+        cpu.emulate();
+        assert_eq!(cpu.memory.fetch_byte_at_offset(1), 12);
+        assert_eq!(cpu.memory.fetch_byte_at_offset(0), 0b10000111);
+        assert_eq!(cpu.stack_pointer, 0);
+    }
+
+    #[test]
+    fn test_double_add() {
+        let mut cpu = create_test_cpu(vec![0x09]);
+        cpu.registers.b = 0x33;
+        cpu.registers.c = 0x9f;
+        cpu.registers.h = 0xa1;
+        cpu.registers.l = 0x7b;
+        cpu.flags.carry = true;
+        cpu.emulate();
+        assert_eq!(cpu.registers.get_hl(), 0xd51a);
+        assert_eq!(cpu.registers.h, 0xd5);
+        assert_eq!(cpu.registers.l, 0x1a);
+        assert_eq!(cpu.flags.carry, false);
+    }
+
+    #[test]
+    fn test_double_increment() {
+        let mut cpu = create_test_cpu(vec![0x13]);
+        cpu.registers.d = 0x38;
+        cpu.registers.e = 0xff;
+        cpu.flags.carry = false;
+        cpu.emulate();
+        assert_eq!(cpu.registers.get_de(), 0x3900);
+        assert_eq!(cpu.registers.d, 0x39);
+        assert_eq!(cpu.registers.e, 0x00);
+        assert_eq!(cpu.flags.carry, false);
+    }
+
+    #[test]
+    fn test_double_increment_wraps() {
+        let mut cpu = create_test_cpu(vec![0x33]);
+        cpu.stack_pointer = 0xFFFF;
+        cpu.emulate();
+        assert_eq!(cpu.stack_pointer, 0x0);
+    }
+
+    #[test]
+    fn test_exchange_registers() {
+        let mut cpu = create_test_cpu(vec![0xeb]);
+        cpu.registers.d = 1;
+        cpu.registers.e = 2;
+        cpu.registers.h = 3;
+        cpu.registers.l = 4;
+        cpu.emulate();
+        assert_eq!(cpu.registers.d, 3);
+        assert_eq!(cpu.registers.e, 4);
+        assert_eq!(cpu.registers.h, 1);
+        assert_eq!(cpu.registers.l, 2);
+    }
+
+    #[test]
+    fn test_move_immediate_to_register() {
+        let mut cpu = create_test_cpu(vec![0x3e, 15]);
+        cpu.registers.acc = 12;
+        cpu.emulate();
+        assert_eq!(cpu.registers.acc, 15);
+    }
+
+    #[test]
+    fn test_add_immediate() {
+        let mut cpu = create_test_cpu(vec![0xc6, 12]);
+        cpu.registers.acc = 12;
+        cpu.emulate();
+        assert_eq!(cpu.registers.acc, 24);
+    }
+
+    #[test]
+    fn test_and_immediate() {
+        let mut cpu = create_test_cpu(vec![0xe6, 0]);
+        cpu.registers.acc = 0xFF;
+        cpu.emulate();
+        assert_eq!(cpu.registers.acc, 0);
+    }
+
+    #[test]
+    fn test_immediate_comparison() {
+        let mut cpu = create_test_cpu(vec![0x3e, 15]);
+        cpu.registers.acc = 12;
+        cpu.emulate();
+        assert_eq!(cpu.registers.acc, 15);
     }
 }
