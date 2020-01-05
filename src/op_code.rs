@@ -25,7 +25,11 @@ impl OpCode {
         println!("Extracting second operand from {:#b}", self.value);
         self.value & 0b00000111
     }
-}
+
+    pub fn extract_jmp_description(&self) -> u8 {
+        println!("Extracting jmp description from {:#b}", self.value);
+        self.value.bitand(0b00000001)
+    }}
 
 impl From<u8> for OpCode {
     fn from(item: u8) -> Self {
@@ -53,5 +57,11 @@ mod tests {
     fn test_extract_dest() {
         let x: OpCode = 0b00111111_u8.into();
         assert_eq!(x.extract_second_operand(), 0b111)
+    }
+
+    #[test]
+    fn test_jmp_description() {
+        let x: OpCode = 0b00000001_u8.into();
+        assert_eq!(x.extract_jmp_description(), 0b1)
     }
 }

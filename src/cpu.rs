@@ -58,26 +58,57 @@ impl Cpu {
             0x40..=0x7f => self.transfer(op_code),
             0x80..=0xbf => self.arithmetic_operation(op_code),
             0xc5 | 0xd5 | 0xe5 | 0xf5 | 0xc6 | 0xe6 | 0xfe => self.single_operand_operation(op_code),
+            0xc2 | 0xc3 | 0xca | 0xd2 | 0xda | 0xe2 | 0xea | 0xf2 | 0xfa => self.jump_to_address(op_code),
             0xeb => self.exchange_registers(op_code),
             _ => panic!("Unknown op code")
         }
     }
 
+    fn jump_to_address(&mut self, op_code: &OpCode) {
+        let instruction = op_code.extract_first_operand();
+        let address = self.fetch_operand_addressed_memory();
+        let result: bool = match instruction {
+            0b0 => {
+                let mut jmp = false;
+                if op_code.extract_jmp_description() > 0 {
+                    jmp = true;
+                } else if !self.flags.zero {
+                    jmp = true;
+                }
+                jmp
+            },
+            // TODO: Missing tests
+            0b001 => self.flags.zero,
+            0b010 => !self.flags.carry,
+            0b011 => self.flags.carry,
+            0b100 => !self.flags.parity,
+            0b101 => self.flags.parity,
+            0b110 => !self.flags.sign,
+            0b111 => self.flags.sign,
+            _ => panic!("Unknown jump description")
+        };
+        if result {
+            self.program_counter = address;
+        }
+        self.program_counter += 1;
+    }
+
     fn load_acc_direct(&mut self, op_code: &OpCode) {
-        let msb = self.memory.fetch_byte_at_offset(self.program_counter + 2);
-        let lsb = self.memory.fetch_byte_at_offset(self.program_counter + 1);
-        let address = (((msb as u16) << 8) | (lsb as u16));
+        let address = self.fetch_operand_addressed_memory();
         let value = self.memory.fetch_byte_at_offset(address);
         self.registers.acc = value;
-        self.program_counter += 2;
     }
 
     fn store_acc_direct(&mut self, op_code: &OpCode) {
+        let address = self.fetch_operand_addressed_memory();
+        self.memory.set_byte_at_offset(address, self.registers.acc);
+    }
+
+    fn fetch_operand_addressed_memory(&mut self) -> u16 {
         let msb = self.memory.fetch_byte_at_offset(self.program_counter + 2);
         let lsb = self.memory.fetch_byte_at_offset(self.program_counter + 1);
-        let address = (((msb as u16) << 8) | (lsb as u16));
-        self.memory.set_byte_at_offset(address, self.registers.acc);
         self.program_counter += 2;
+        (((msb as u16) << 8) | (lsb as u16))
     }
 
     fn exchange_registers(&mut self, op_code: &OpCode) {
@@ -726,5 +757,28 @@ mod tests {
         cpu.registers.acc = 15;
         cpu.emulate();
         assert_eq!(cpu.registers.acc, 0);
+    }
+
+    #[test]
+    fn test_jmp() {
+        let mut cpu = create_test_cpu(vec![0xc3, 3, 0b0, 0x04, 0]);
+        cpu.emulate();
+        assert_eq!(cpu.registers.b, 0);
+    }
+
+    #[test]
+    fn test_jnz() {
+        let mut cpu = create_test_cpu(vec![0xc2, 3, 0b0, 0x04, 0]);
+        cpu.flags.zero = false;
+        cpu.emulate();
+        assert_eq!(cpu.registers.b, 0);
+    }
+
+    #[test]
+    fn test_jnz_not_set() {
+        let mut cpu = create_test_cpu(vec![0xc2, 3, 0b0, 0x04, 0]);
+        cpu.flags.zero = true;
+        cpu.emulate();
+        assert_eq!(cpu.registers.b, 1);
     }
 }
