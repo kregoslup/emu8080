@@ -50,6 +50,10 @@ impl Cpu {
             },
             0x76 => self.halt(),
             0x0a | 0x1a => self.load_accumulator(op_code),
+            // STA
+            0x32 => self.store_acc_direct(op_code),
+            // LDA
+            0x3a => self.load_acc_direct(op_code),
             0x01..=0x3e => self.single_operand_operation(op_code),
             0x40..=0x7f => self.transfer(op_code),
             0x80..=0xbf => self.arithmetic_operation(op_code),
@@ -57,6 +61,23 @@ impl Cpu {
             0xeb => self.exchange_registers(op_code),
             _ => panic!("Unknown op code")
         }
+    }
+
+    fn load_acc_direct(&mut self, op_code: &OpCode) {
+        let msb = self.memory.fetch_byte_at_offset(self.program_counter + 2);
+        let lsb = self.memory.fetch_byte_at_offset(self.program_counter + 1);
+        let address = (((msb as u16) << 8) | (lsb as u16));
+        let value = self.memory.fetch_byte_at_offset(address);
+        self.registers.acc = value;
+        self.program_counter += 2;
+    }
+
+    fn store_acc_direct(&mut self, op_code: &OpCode) {
+        let msb = self.memory.fetch_byte_at_offset(self.program_counter + 2);
+        let lsb = self.memory.fetch_byte_at_offset(self.program_counter + 1);
+        let address = (((msb as u16) << 8) | (lsb as u16));
+        self.memory.set_byte_at_offset(address, self.registers.acc);
+        self.program_counter += 2;
     }
 
     fn exchange_registers(&mut self, op_code: &OpCode) {
@@ -688,5 +709,22 @@ mod tests {
         cpu.registers.acc = 12;
         cpu.emulate();
         assert_eq!(cpu.registers.acc, 15);
+    }
+
+    #[test]
+    fn test_store_direct() {
+        let mut cpu = create_test_cpu(vec![0x32, 3, 0b0, 15]);
+        cpu.registers.acc = 0;
+        assert_eq!(cpu.memory.fetch_byte_at_offset(3), 15);
+        cpu.emulate();
+        assert_eq!(cpu.memory.fetch_byte_at_offset(3), 0);
+    }
+
+    #[test]
+    fn test_load_direct() {
+        let mut cpu = create_test_cpu(vec![0x3a, 3, 0b0, 0]);
+        cpu.registers.acc = 15;
+        cpu.emulate();
+        assert_eq!(cpu.registers.acc, 0);
     }
 }
