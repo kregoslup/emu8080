@@ -6,6 +6,7 @@ use std::fmt::Debug;
 use std::num::Wrapping;
 use std::u8;
 use std::process::exit;
+use std::ops::BitAnd;
 
 #[derive(Debug)]
 struct Cpu {
@@ -58,16 +59,17 @@ impl Cpu {
             0x40..=0x7f => self.transfer(op_code),
             0x80..=0xbf => self.arithmetic_operation(op_code),
             0xc5 | 0xd5 | 0xe5 | 0xf5 | 0xc6 | 0xe6 | 0xfe => self.single_operand_operation(op_code),
+            0xc4 | 0xcc | 0xcd | 0xd4 | 0xdc | 0xec | 0xf4 | 0xfc => self.call_subroutine(op_code),
             0xc2 | 0xc3 | 0xca | 0xd2 | 0xda | 0xe2 | 0xea | 0xf2 | 0xfa => self.jump_to_address(op_code),
             0xeb => self.exchange_registers(op_code),
             _ => panic!("Unknown op code")
         }
     }
 
-    fn jump_to_address(&mut self, op_code: &OpCode) {
+    fn should_jump(&mut self, op_code: &OpCode) -> bool {
         let instruction = op_code.extract_first_operand();
         let address = self.fetch_operand_addressed_memory();
-        let result: bool = match instruction {
+        return match instruction {
             0b0 => {
                 let mut jmp = false;
                 if op_code.extract_jmp_description() > 0 {
@@ -87,10 +89,28 @@ impl Cpu {
             0b111 => self.flags.sign,
             _ => panic!("Unknown jump description")
         };
+    }
+
+    fn call_subroutine(&mut self, op_code: &OpCode) {
+        if self.should_jump(op_code) {
+            self.program_counter += 1;
+            let upper = (self.program_counter.bitand(0b1111_1111) >> 7) as u8;
+            let lower = self.program_counter as u8;
+            self.memory.set_byte_at_offset(self.stack_pointer - 1, upper);
+            self.memory.set_byte_at_offset(self.stack_pointer - 2, lower);
+            self.stack_pointer -= 2;
+        } else {
+            self.program_counter += 1;
+        }
+    }
+
+    fn jump_to_address(&mut self, op_code: &OpCode) {
+        let result: bool = self.should_jump(op_code);
         if result {
             self.program_counter = address;
+        } else {
+            self.program_counter += 1;
         }
-        self.program_counter += 1;
     }
 
     fn load_acc_direct(&mut self, op_code: &OpCode) {
